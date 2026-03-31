@@ -1,0 +1,1123 @@
+import java.net.PasswordAuthentication;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+public class DatabaseManager {
+    public static final String DB_PATH = "F:/Server_Storage/family_server.db";
+    static Connection sharedConn;
+    private static final Object lock = new Object();
+
+    // ✅ Constructor ensures connection + initialization only once
+    public DatabaseManager() {
+        try {
+            if (sharedConn == null || sharedConn.isClosed()) {
+                System.out.println("[DatabaseManager] Loading SQLite JDBC driver...");
+                Class.forName("org.sqlite.JDBC");
+
+                System.out.println("[DatabaseManager] Connecting to: " + DB_PATH);
+                sharedConn = DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
+
+                System.out.println("[DatabaseManager] ✅ Database connected successfully!");
+
+                // ✅ Always initialize tables immediately
+                initDatabase();
+
+            } else {
+                System.out.println("[DatabaseManager] ℹ️ Reusing existing DB connection.");
+            }
+        } catch (Exception e) {
+            System.err.println("[DatabaseManager] ❌ Exception in constructor: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // ✅ Shared connection getter
+    public static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
+    }
+
+
+    public static Connection getNewConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
+    }
+
+    // ✅ Guaranteed single initialization
+    public static void initDatabase() {
+        try {
+            if (sharedConn == null || sharedConn.isClosed()) {
+                System.err.println("[DatabaseManager] ❌ initDatabase called but sharedConn is null!");
+                return;
+            }
+
+            synchronized (lock) {
+                try (Statement stmt = sharedConn.createStatement()) {
+
+                    // === USERS TABLE (NEW - QR pairing compatible) ===
+                    stmt.executeUpdate("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT NOT NULL,
+        role TEXT CHECK(role IN ('parent', 'child')) NOT NULL,
+        device_name TEXT,
+        device_mac TEXT UNIQUE,
+        device_serial TEXT UNIQUE,
+        device_uuid TEXT UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""");
+                    stmt.execute("""
+    CREATE TABLE IF NOT EXISTS device_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        battery INTEGER,
+        free_storage INTEGER,
+        os_version TEXT,
+        device_model TEXT,
+        app_version TEXT,
+        timestamp LONG
+    )
+""");
+
+
+
+
+                    // === PHOTOS TABLE ===
+                    stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS photos (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      file_name TEXT NOT NULL,
+                      file_size TEXT,
+                      date_taken TEXT,
+                      saved_path TEXT,
+                      user_id INTEGER NOT NULL REFERENCES users(id),
+                      upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """);
+
+                    // === VIDEOS TABLE ===
+                    stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS videos (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      file_name TEXT NOT NULL,
+                      file_size TEXT,
+                      date_taken TEXT,
+                      saved_path TEXT,
+                      user_id INTEGER NOT NULL REFERENCES users(id),
+                      upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """);
+
+                    // === PHOTO CAPTION TABLE ===
+                    stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS photosCaption (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_name TEXT NOT NULL,
+                        caption TEXT
+                    )
+                """);
+
+                    // === VIDEO CAPTION TABLE ===
+                    stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS videoCaptions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_name TEXT NOT NULL,
+                        caption TEXT
+                    )
+                """);
+                    stmt.executeUpdate("""
+CREATE TABLE IF NOT EXISTS app_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    app_name TEXT NOT NULL,
+    usage_time_ms LONG NOT NULL,
+    start_time LONG NOT NULL,
+    end_time LONG NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""");
+
+                    stmt.executeUpdate("""
+CREATE TABLE IF NOT EXISTS screen_time (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    total_screen_time_ms LONG NOT NULL,
+    day DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(username, day)
+)
+""");
+
+
+                    System.out.println("[DatabaseManager] ✅ SQLite tables initialized successfully at: " + DB_PATH);
+                }
+
+                // Confirm users table exists
+                try (ResultSet rs = sharedConn.getMetaData().getTables(null, null, "users", null)) {
+                    if (rs.next()) {
+                        System.out.println("[DatabaseManager] ✅ 'users' table confirmed in database.");
+                    } else {
+                        System.err.println("[DatabaseManager] ❌ 'users' table missing after init!");
+                    }
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("[DatabaseManager] ❌ DB init error: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public boolean checkUserLogin(String username, String password, String deviceUUID) {
+        String sql = "SELECT id FROM users WHERE username = ? AND password = ? AND device_uuid = ?";
+
+        try (PreparedStatement stmt = sharedConn.prepareStatement(sql)) {
+            stmt.setString(1, username);
+            stmt.setString(2, password);
+            stmt.setString(3, deviceUUID);
+            System.out.println(username);
+            System.out.println(password);
+            System.out.println(deviceUUID);
+
+
+            ResultSet rs = stmt.executeQuery();
+            return rs.next(); // returns true if user found
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+
+
+
+    public boolean fileBelongsToUser(String fileName, int userId) {
+        // Determine which table to query based on file extension
+        String table;
+        String lower = fileName.toLowerCase();
+
+        if (lower.endsWith(".mp4") || lower.endsWith(".avi") ||
+            lower.endsWith(".mov") || lower.endsWith(".mkv")) {
+            table = "videos";
+        } else {
+            table = "photos";
+        }
+
+        // Check both file_name and saved_path columns
+        String sql = "SELECT COUNT(*) FROM " + table +
+            " WHERE (file_name = ? OR saved_path LIKE ?) AND user_id = ?";
+
+        try (PreparedStatement ps = sharedConn.prepareStatement(sql)) {
+            ps.setString(1, fileName);
+            ps.setString(2, "%" + fileName);
+            ps.setInt(3, userId);
+
+            ResultSet rs = ps.executeQuery();
+            boolean exists = rs.next() && rs.getInt(1) > 0;
+
+            if (!exists) {
+                System.out.println("⚠️ No DB match for file: " + fileName + " (user_id=" + userId + ", table=" + table + ")");
+            }
+
+            return exists;
+
+        } catch (SQLException e) {
+            System.err.println("⚠️ fileBelongsToUser check failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+
+
+
+
+    // ============================= INSERTS =============================
+
+    public static void insertPhotoMetadata(String fileName, String size, String dateTaken, String savedPath, Integer userId) {
+       // System.out.println("DBBDBDBDBDBDBDBDBDBBBDBDBDBDBB"+fileName);
+        String sql = "INSERT INTO photos(file_name, file_size, date_taken, saved_path, user_id) VALUES(?, ?, ?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, fileName);
+                pstmt.setString(2, size);
+                pstmt.setString(3, dateTaken);
+                pstmt.setString(4, savedPath);
+                pstmt.setInt(5, userId);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void insertVideoMetadata(String fileName, String size, String dateTaken, String savedPath, Integer userId) {
+        String sql = "INSERT INTO videos(file_name, file_size, date_taken, saved_path, user_id) VALUES(?, ?, ?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, fileName);
+                pstmt.setString(2, size);
+                pstmt.setString(3, dateTaken);
+                pstmt.setString(4, savedPath);
+                pstmt.setInt(5, userId);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void insertPhotoCaption(String fileName, String caption) {
+        String sql = "INSERT INTO photosCaption(file_name, caption) VALUES(?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, fileName);
+                pstmt.setString(2, caption);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                System.err.println("DB insert photo caption error: " + e.getMessage());
+            }
+        }
+    }
+
+    public static void insertVideoCaption(String fileName, String caption) {
+        String sql = "INSERT INTO videoCaptions(file_name, caption) VALUES(?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, fileName);
+                pstmt.setString(2, caption);
+                pstmt.executeUpdate();
+            } catch (SQLException e) {
+                System.err.println("DB insert video caption error: " + e.getMessage());
+            }
+        }
+    }
+
+    // ============================= NEW METHODS =============================
+    public static Integer getUserIdByUsername(String username) {
+        String sql = "SELECT id FROM users WHERE username = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, username);
+                ResultSet rs = pstmt.executeQuery();
+                if (rs.next()) return rs.getInt("id");
+            } catch (SQLException e) { e.printStackTrace(); }
+        }
+        return null;
+    }
+
+    public static List<String> getPhotoNamesByUser(int userId) {
+        List<String> names = new ArrayList<>();
+        String sql = "SELECT file_name FROM photos WHERE user_id = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setInt(1, userId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) names.add(rs.getString("file_name"));
+            } catch (SQLException e) { e.printStackTrace(); }
+        }
+        return names;
+    }
+
+    public static List<String> getVideoNamesByUser(int userId) {
+        List<String> names = new ArrayList<>();
+        String sql = "SELECT file_name FROM videos WHERE user_id = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setInt(1, userId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) names.add(rs.getString("file_name"));
+            } catch (SQLException e) { e.printStackTrace(); }
+        }
+        return names;
+    }
+    // ============================= QUERIES =============================
+
+    public static List<String> getPhotoNames() {
+        List<String> names = new ArrayList<>();
+        String sql = "SELECT file_name FROM photos";
+        synchronized (lock) {
+            try (Statement stmt = sharedConn.createStatement();
+                 ResultSet rs = stmt.executeQuery(sql)) {
+                while (rs.next()) names.add(rs.getString("file_name"));
+            } catch (SQLException e) {
+                System.err.println("DB query error (photo names): " + e.getMessage());
+            }
+        }
+        return names;
+    }
+
+    public static List<String> getVideoNames() {
+        List<String> names = new ArrayList<>();
+        String sql = "SELECT file_name FROM videos";
+        synchronized (lock) {
+            try (Statement stmt = sharedConn.createStatement();
+                 ResultSet rs = stmt.executeQuery(sql)) {
+                while (rs.next()) names.add(rs.getString("file_name"));
+            } catch (SQLException e) {
+                System.err.println("DB query error (video names): " + e.getMessage());
+            }
+        }
+        return names;
+    }
+
+
+    public static List<PhotoRecord> getUncaptionedPhotosByUser(int userId) {
+        List<PhotoRecord> photos = new ArrayList<>();
+        String sql = """
+        SELECT p.file_name, p.saved_path
+        FROM photos p
+        WHERE p.user_id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM photosCaption pc
+              WHERE pc.file_name = p.file_name
+          )
+    """;
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setInt(1, userId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    photos.add(new PhotoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+                }
+            } catch (SQLException e) {
+                System.err.println("DB query error (uncaptioned photos for user): " + e.getMessage());
+            }
+        }
+        photos.add(new PhotoRecord("EndP", "End"));
+        System.out.println("the end was added!!!!!!!!!!!!!!!!!");
+        return photos;
+    }
+
+    public static List<VideoRecord> getUncaptionedVideosByUser(int userId) {
+        List<VideoRecord> videos = new ArrayList<>();
+        String sql = """
+        SELECT v.file_name, v.saved_path
+        FROM videos v
+        WHERE v.user_id = ?
+          AND v.file_name NOT IN (SELECT file_name FROM videoCaptions)
+    """;
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setInt(1, userId);
+                ResultSet rs = pstmt.executeQuery();
+                while (rs.next()) {
+                    videos.add(new VideoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+                }
+            } catch (SQLException e) {
+                System.err.println("DB query error (uncaptioned videos for user): " + e.getMessage());
+            }
+        }
+        videos.add(new VideoRecord("EndV", "End"));
+        return videos;
+    }
+
+//    public static List<PhotoRecord> getUncaptionedPhotos() {
+//        List<PhotoRecord> photos = new ArrayList<>();
+//        String sql = """
+//            SELECT p.file_name, p.saved_path
+//            FROM photos p
+//            WHERE NOT EXISTS (
+//                SELECT 1 FROM photosCaption pc
+//                WHERE pc.file_name = p.file_name
+//            )
+//        """;
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    photos.add(new PhotoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned photos): " + e.getMessage());
+//            }
+//        }
+//        photos.add(new PhotoRecord("EndP", "End"));
+//        return photos;
+//    }
+//
+//    public static List<VideoRecord> getUncaptionedVideos() {
+//        List<VideoRecord> videos = new ArrayList<>();
+//        String sql = """
+//            SELECT file_name, saved_path FROM videos
+//            WHERE file_name NOT IN (SELECT file_name FROM videoCaptions)
+//        """;
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    videos.add(new VideoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned videos): " + e.getMessage());
+//            }
+//        }
+//        videos.add(new VideoRecord("EndV", "End"));
+//        return videos;
+//    }
+
+    // ============================= AUTH SYSTEM =============================
+
+    public static boolean registerUser(String username, String password, String role) {
+        if (!role.equals("parent") && !role.equals("child")) {
+            System.err.println("Invalid role: " + role);
+            return false;
+        }
+
+        String sql = "INSERT INTO users(username, password, role) VALUES(?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, username);
+                pstmt.setString(2, password); // You can hash it later with SHA-256
+                pstmt.setString(3, role);
+                pstmt.executeUpdate();
+                return true;
+            } catch (SQLException e) {
+                System.err.println("Signup error: " + e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    public static boolean loginUser(String username, String password) {
+        String sql = "SELECT * FROM users WHERE username = ? AND password = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, username);
+                pstmt.setString(2, password);
+                ResultSet rs = pstmt.executeQuery();
+                return rs.next();
+            } catch (SQLException e) {
+                System.err.println("Login error: " + e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    public static String getUserRole(String username) {
+        String sql = "SELECT role FROM users WHERE username = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, username);
+                ResultSet rs = pstmt.executeQuery();
+                if (rs.next()) return rs.getString("role");
+            } catch (SQLException e) {
+                System.err.println("Get user role error: " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    // ============================= RECORD CLASSES =============================
+
+    public static class PhotoRecord {
+        public final String fileName;
+        public final String savedPath;
+        public PhotoRecord(String f, String p) { fileName = f; savedPath = p; }
+    }
+
+    public static class VideoRecord {
+        public final String fileName;
+        public final String savedPath;
+        public VideoRecord(String f, String p) { fileName = f; savedPath = p; }
+    }
+
+
+
+
+    public static boolean fileExists(String fileName) {
+        String sqlPhoto = "SELECT 1 FROM photos WHERE file_name = ? LIMIT 1";
+        String sqlVideo = "SELECT 1 FROM videos WHERE file_name = ? LIMIT 1";
+
+        synchronized (lock) {
+            try (PreparedStatement pstmtPhoto = sharedConn.prepareStatement(sqlPhoto)) {
+                pstmtPhoto.setString(1, fileName);
+                try (ResultSet rs = pstmtPhoto.executeQuery()) {
+                    if (rs.next()) return true;
+                }
+            } catch (SQLException e) {
+                System.err.println("DB error checking photo existence: " + e.getMessage());
+            }
+
+            try (PreparedStatement pstmtVideo = sharedConn.prepareStatement(sqlVideo)) {
+                pstmtVideo.setString(1, fileName);
+                try (ResultSet rs = pstmtVideo.executeQuery()) {
+                    if (rs.next()) return true;
+                }
+            } catch (SQLException e) {
+                System.err.println("DB error checking video existence: " + e.getMessage());
+            }
+        }
+        return false;
+    }
+
+
+
+    public static String getFilePath(String fileName) {
+        String sqlPhoto = "SELECT saved_path FROM photos WHERE file_name = ? LIMIT 1";
+        String sqlVideo = "SELECT saved_path FROM videos WHERE file_name = ? LIMIT 1";
+
+        synchronized (lock) {
+            try (PreparedStatement pstmtPhoto = sharedConn.prepareStatement(sqlPhoto)) {
+                pstmtPhoto.setString(1, fileName);
+                try (ResultSet rs = pstmtPhoto.executeQuery()) {
+                    if (rs.next()) return rs.getString("saved_path");
+                }
+            } catch (SQLException e) {
+                System.err.println("DB error getting photo path: " + e.getMessage());
+            }
+
+            try (PreparedStatement pstmtVideo = sharedConn.prepareStatement(sqlVideo)) {
+                pstmtVideo.setString(1, fileName);
+                try (ResultSet rs = pstmtVideo.executeQuery()) {
+                    if (rs.next()) return rs.getString("saved_path");
+                }
+            } catch (SQLException e) {
+                System.err.println("DB error getting video path: " + e.getMessage());
+            }
+        }
+        return null; // not found
+    }
+    // Insert new user
+    public static boolean createUser(String email, String password, String role) {
+        System.out.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        String sql = "INSERT INTO users(email, password, role) VALUES(?, ?, ?)";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, email);
+                pstmt.setString(2, password); // You can hash passwords later
+                pstmt.setString(3, role);
+                pstmt.executeUpdate();
+                return true;
+            } catch (SQLException e) {
+                System.err.println("DB createUser error: " + e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    // Check user credentials
+    public static boolean checkUser(String email, String password) {
+        String sql = "SELECT * FROM users WHERE email = ? AND password = ?";
+        synchronized (lock) {
+            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+                pstmt.setString(1, email);
+                pstmt.setString(2, password);
+                ResultSet rs = pstmt.executeQuery();
+                return rs.next();
+            } catch (SQLException e) {
+                System.err.println("DB checkUser error: " + e.getMessage());
+                return false;
+            }
+        }
+    }
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//import java.sql.*;
+//import java.util.ArrayList;
+//import java.util.List;
+//
+//public class DatabaseManager {
+//    public static final String DB_PATH = "F:/received_photos2/photo_data.db";
+//    private static Connection sharedConn;
+//    private static final Object lock = new Object();
+//
+//    // Initialize shared connection and tables
+//    public static void initDatabase() {
+//        try {
+//            sharedConn = DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
+//            synchronized (lock) {
+//                Statement stmt = sharedConn.createStatement();
+//
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS photos (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        file_size TEXT,
+//                        date_taken TEXT,
+//                        saved_path TEXT,
+//                        upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+//                    )
+//                """);
+//
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS photosCaption (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        caption TEXT
+//                    )
+//                """);
+//
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS videos (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        file_size TEXT,
+//                        date_taken TEXT,
+//                        saved_path TEXT,
+//                        upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+//                    )
+//                """);
+//
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS videoCaptions (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        caption TEXT
+//                    )
+//                """);
+//
+//                stmt.close();
+//                System.out.println("SQLite tables initialized.");
+//            }
+//        } catch (SQLException e) {
+//            System.err.println("DB init error: " + e.getMessage());
+//        }
+//    }
+//
+//    // ---------------- Metadata inserts ----------------
+//
+//    public static void insertPhotoMetadata(String fileName, String size, String dateTaken, String savedPath) {
+//        String sql = "INSERT INTO photos(file_name, file_size, date_taken, saved_path) VALUES(?, ?, ?, ?)";
+//        System.out.println("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+//        System.out.println(fileName);
+//        System.out.println("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+//        synchronized (lock) {
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, size);
+//                pstmt.setString(3, dateTaken);
+//                pstmt.setString(4, savedPath);
+//                pstmt.executeUpdate();
+//            } catch (SQLException e) {
+//                System.err.println("DB insert photo metadata error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    public static void insertVideoMetadata(String fileName, String size, String dateTaken, String savedPath) {
+//        String sql = "INSERT INTO videos(file_name, file_size, date_taken, saved_path) VALUES(?, ?, ?, ?)";
+//        //System.out.println("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+//       // System.out.println(fileName);
+//        //System.out.println("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+//        synchronized (lock) {
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, size);
+//                pstmt.setString(3, dateTaken);
+//                pstmt.setString(4, savedPath);
+//                pstmt.executeUpdate();
+//            } catch (SQLException e) {
+//                System.err.println("DB insert video metadata error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // ---------------- Caption inserts ----------------
+//
+//    public static void insertPhotoCaption(String fileName, String caption) {
+//        //System.out.println("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+//      //  System.out.println("2222222222222222222222222222222222222222222222222222222222222222");
+//        System.out.println(fileName);
+//        System.out.println(caption);
+//
+//        // System.out.println("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+//
+//        String sql = "INSERT INTO photosCaption(file_name, caption) VALUES(?, ?)";
+//        synchronized (lock) {
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, caption);
+//                pstmt.executeUpdate();
+//            } catch (SQLException e) {
+//                System.err.println("DB insert photo caption error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    public static void insertVideoCaption(String fileName, String caption) {
+//        String sql = "INSERT INTO videoCaptions(file_name, caption) VALUES(?, ?)";
+//        System.out.println(fileName);
+//        System.out.println(caption);
+//        synchronized (lock) {
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, caption);
+//                pstmt.executeUpdate();
+//            } catch (SQLException e) {
+//                System.err.println("DB insert video caption error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // ---------------- Queries ----------------
+//
+//    public static List<String> getPhotoNames() {
+//        List<String> names = new ArrayList<>();
+//        String sql = "SELECT file_name FROM photos";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    names.add(rs.getString("file_name"));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (photo names): " + e.getMessage());
+//            }
+//        }
+//        return names;
+//    }
+//
+//    public static List<PhotoRecord> getUncaptionedPhotos() {
+//        List<PhotoRecord> photos = new ArrayList<>();
+//        String sql = "SELECT p.file_name, p.saved_path\n" +
+//            "FROM photos p\n" +
+//            "WHERE NOT EXISTS (\n" +
+//            "    SELECT 1\n" +
+//            "    FROM photosCaption pc\n" +
+//            "    WHERE pc.file_name = p.file_name\n" +
+//            ")";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    System.out.println(rs.getString("file_name"));
+//                    photos.add(new PhotoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned photos): " + e.getMessage());
+//            }
+//        }
+//        photos.add(new PhotoRecord("EndP", "End"));
+//        return photos;
+//    }
+//
+//    public static List<VideoRecord> getUncaptionedVideos() {
+//        List<VideoRecord> videos = new ArrayList<>();
+//        String sql = "SELECT file_name, saved_path FROM videos " +
+//            "WHERE file_name NOT IN (SELECT file_name FROM videoCaptions)";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    videos.add(new VideoRecord(rs.getString("file_name"), rs.getString("saved_path")));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned videos): " + e.getMessage());
+//            }
+//        }
+//        videos.add(new VideoRecord("EndV", "End"));
+//        return videos;
+//    }
+//
+//    // ---------------- Helper classes ----------------
+//
+//    public static class PhotoRecord {
+//        public final String fileName;
+//        public final String savedPath;
+//        public PhotoRecord(String f, String p) { fileName = f; savedPath = p; }
+//    }
+//
+//    public static class VideoRecord {
+//        public final String fileName;
+//        public final String savedPath;
+//        public VideoRecord(String f, String p) { fileName = f; savedPath = p; }
+//    }
+//}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//import java.io.File;
+//import java.sql.*;
+//import java.util.ArrayList;
+//import java.util.HashMap;
+//import java.util.List;
+//import java.util.Map;
+//
+//public class DatabaseManager {
+//    private static final File dbFile = new File("family.db");
+//    private static Connection sharedConn;
+//    private static final Object dbLock = new Object();
+//
+//    // Initialize database and open shared connection
+//    public static void initDatabase() {
+//        File photoDir = new File("F:/received_photos2");
+//        if (!photoDir.exists()) {
+//            photoDir.mkdirs();
+//        }
+//
+//        File videoDir = new File("F:/received_videos");
+//        if (!videoDir.exists()) {
+//            videoDir.mkdirs();
+//        }
+//
+//        try {
+//            sharedConn = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath());
+//
+//            // Set busy timeout so SQLite waits instead of failing
+//            try (Statement st = sharedConn.createStatement()) {
+//                st.execute("PRAGMA busy_timeout = 5000"); // 5 seconds
+//            }
+//
+//            try (Statement stmt = sharedConn.createStatement()) {
+//                // Photos table
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS photos (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        file_size TEXT,
+//                        date_taken TEXT,
+//                        saved_path TEXT,
+//                        upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+//                    )
+//                """);
+//
+//                // Photo captions table
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS photosCaption (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        Caption TEXT
+//                    )
+//                """);
+//
+//                // Videos table
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS videos (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        file_size TEXT,
+//                        date_taken TEXT,
+//                        saved_path TEXT,
+//                        upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+//                    )
+//                """);
+//
+//                // Video captions table
+//                stmt.execute("""
+//                    CREATE TABLE IF NOT EXISTS videoCaptions (
+//                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+//                        file_name TEXT NOT NULL,
+//                        caption TEXT
+//                    )
+//                """);
+//            }
+//
+//            System.out.println("SQLite tables initialized and shared connection ready.");
+//
+//        } catch (SQLException e) {
+//            System.err.println("DB init error: " + e.getMessage());
+//        }
+//    }
+//
+//    // Insert photo metadata
+//    public static void insertMetadata(String fileName, String size, String dateTaken, String savedPath) {
+//        synchronized (dbLock) {
+//            String sql = "INSERT INTO photos(file_name, file_size, date_taken, saved_path) VALUES(?, ?, ?, ?)";
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, size);
+//                pstmt.setString(3, dateTaken);
+//                pstmt.setString(4, savedPath);
+//                pstmt.executeUpdate();
+//                System.out.println("Photo metadata inserted into DB.");
+//            } catch (SQLException e) {
+//                System.err.println("DB insert error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // Insert video metadata
+//    public static void insertVideoMetadata(String fileName, String size, String dateTaken, String savedPath) {
+//        synchronized (dbLock) {
+//            String sql = "INSERT INTO videos(file_name, file_size, date_taken, saved_path) VALUES(?, ?, ?, ?)";
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, size);
+//                pstmt.setString(3, dateTaken);
+//                pstmt.setString(4, savedPath);
+//                pstmt.executeUpdate();
+//                System.out.println("Video metadata inserted into DB.");
+//            } catch (SQLException e) {
+//                System.err.println("DB insert error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // Insert photo caption
+//    public static void insertCaptions(String fileName, String caption) {
+//        synchronized (dbLock) {
+//            String sql = "INSERT INTO photosCaption(file_name, Caption) VALUES(?, ?)";
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, caption);
+//                pstmt.executeUpdate();
+//                System.out.println("Photo caption inserted into DB.");
+//            } catch (SQLException e) {
+//                System.err.println("DB insert error: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // Insert video caption
+//    public static void insertVideoCaptions(String fileName, String caption) {
+//        synchronized (dbLock) {
+//            String sql = "INSERT INTO videoCaptions(file_name, caption) VALUES(?, ?)";
+//            try (PreparedStatement pstmt = sharedConn.prepareStatement(sql)) {
+//                pstmt.setString(1, fileName);
+//                pstmt.setString(2, caption);
+//                pstmt.executeUpdate();
+//                System.out.println("Video caption inserted into DB.");
+//            } catch (SQLException e) {
+//                System.err.println("DB insert error (video captions): " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    // Close connection at shutdown
+//    public static void close() {
+//        try {
+//            if (sharedConn != null && !sharedConn.isClosed()) {
+//                sharedConn.close();
+//            }
+//        } catch (SQLException e) {
+//            System.err.println("DB close error: " + e.getMessage());
+//        }
+//    }
+//
+//
+//    public static List<Map<String, String>> getUncaptionedPhotos() {
+//        List<Map<String, String>> result = new ArrayList<>();
+//        String sql = "SELECT file_name, saved_path FROM photos " +
+//            "WHERE file_name NOT IN (SELECT file_name FROM photosCaption)";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    Map<String, String> row = new HashMap<>();
+//                    row.put("file_name", rs.getString("file_name"));
+//                    row.put("saved_path", rs.getString("saved_path"));
+//                    result.add(row);
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned photos): " + e.getMessage());
+//            }
+//        }
+//        return result;
+//    }
+//
+//    public static List<Map<String, String>> getUncaptionedVideos() {
+//        List<Map<String, String>> result = new ArrayList<>();
+//        String sql = "SELECT file_name, saved_path FROM videos " +
+//            "WHERE file_name NOT IN (SELECT file_name FROM videoCaptions)";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    Map<String, String> row = new HashMap<>();
+//                    row.put("file_name", rs.getString("file_name"));
+//                    row.put("saved_path", rs.getString("saved_path"));
+//                    result.add(row);
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (uncaptioned videos): " + e.getMessage());
+//            }
+//        }
+//        return result;
+//    }
+//    public static List<String> getPhotoNames() {
+//        List<String> names = new ArrayList<>();
+//        String sql = "SELECT file_name FROM photos";
+//        synchronized (lock) {
+//            try (Statement stmt = sharedConn.createStatement();
+//                 ResultSet rs = stmt.executeQuery(sql)) {
+//                while (rs.next()) {
+//                    names.add(rs.getString("file_name"));
+//                }
+//            } catch (SQLException e) {
+//                System.err.println("DB query error (photo names): " + e.getMessage());
+//            }
+//        }
+//        return names;
+//    }
+//
+//
+//}

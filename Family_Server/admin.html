@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><title>Admin Registration</title></head>
+<body>
+<h2>Preview Android Registration</h2>
+<img id="qrImg" src="" width="200"/>
+<div id="preview"></div>
+<button id="saveBtn" disabled>Save User to DB</button>
+
+<script>
+    async function loadQRandPreview() {
+        // Get QR token
+        const qrResp = await fetch("/generate_qr");
+        const qrJson = await qrResp.json();
+        document.getElementById("qrImg").src = qrJson.qr_path;
+
+        // Poll preview info from Android
+        const poll = setInterval(async()=>{
+            const previewResp = await fetch("/get_preview");
+            const preview = await previewResp.json();
+            if(Object.keys(preview).length>0){
+                clearInterval(poll);
+                document.getElementById("preview").innerHTML = `<pre>${JSON.stringify(preview,null,2)}</pre>`;
+                const saveBtn = document.getElementById("saveBtn");
+                saveBtn.disabled = false;
+                saveBtn.onclick = async ()=>{
+                    const resp = await fetch("/save_user",{method:"POST"});
+                    const result = await resp.json();
+                    alert(result.status==="ok"?"User saved!":"Failed");
+                    saveBtn.disabled=true;
+                }
+            }
+        },1000);
+    }
+    loadQRandPreview();
+</script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parent Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- ========== SIDEBAR ========== -->
+    <div class="sidebar">
+        <h2>👨‍👩‍👧 Parent Panel</h2>
+
+        <div class="menu">
+            <div class="menu-item" onclick="openOverview()">📊 Overview</div>
+            <div class="menu-item">👶 Children</div>
+            <div class="menu-item" onclick="openAlerts()">🚨 Alerts</div>
+            <div class="menu-item" onclick="openReports()">📄 Reports</div>
+        </div>
+
+        <h3>Children</h3>
+        <div id="childList"></div> <!-- Dynamically loaded child list -->
+    </div>
+
+    <!-- ========== MAIN CONTENT ========== -->
+    <div class="content">
+
+        <!-- ALERTS SECTION in the Sidebar -->
+        <div id="alerts-section" class="card hidden">
+            <h3>🚨 Alerts</h3>
+            <div id="alertsList"></div>
+        </div>
+
+        <!-- REPORTS SECTION in the Sidebar -->
+        <div id="reports-section" class="card hidden">
+            <h3>📄 Activity Reports</h3>
+
+            <!-- Report Controls -->
+            <div class="report-controls">
+                <!-- Dropdown for selecting child -->
+                <select id="childSelect">
+                    <option value="" disabled selected>Select a child</option>
+                </select>
+
+                <!-- Dropdown for selecting period -->
+                <select id="reportPeriod">
+                    <option value="daily">Today</option>
+                    <option value="weekly">This Week</option>
+                    <option value="monthly">This Month</option>
+                    <option value="yearly">This Year</option>
+                </select>
+
+                <!-- Generate button -->
+                <button onclick="loadReport()">Generate</button>
+            </div>
+
+            <!-- Report Cards -->
+            <div class="cards">
+                <div class="card">
+                    <h4>⏱ Screen Time</h4>
+                    <p id="reportScreenTime">0 min</p>
+                </div>
+
+                <div class="card">
+                    <h4>🚨 Alerts</h4>
+                    <p>Total Alerts: <strong id="reportAlertsCount">0</strong></p>
+                    <p>Max NSFW Score: <strong id="reportMaxScore">0.00</strong></p>
+                </div>
+
+                <div class="card">
+                    <h4>📱 Top Apps</h4>
+                    <ul id="reportTopApps"></ul>
+                </div>
+
+                <div class="card">
+                    <h4>📸 Media Activity</h4>
+                    <p>Photos: <strong id="reportPhotos">0</strong></p>
+                    <p>Videos: <strong id="reportVideos">0</strong></p>
+                </div>
+
+                <div class="card">
+                    <h4>📱 Device Status</h4>
+                    <p>Model: <strong id="reportDeviceModel">—</strong></p>
+                    <p>OS: <strong id="reportDeviceOS">—</strong></p>
+                    <p>Battery: <strong id="reportBattery">—</strong></p>
+                    <p>Storage: <strong id="reportStorage">—</strong></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CHILD DETAILS SECTION -->
+        <div id="child-details" class="card hidden">
+            <h3 id="childName"></h3>
+
+            <p>🔋 Battery: <span id="batteryValue"></span></p>
+            <div class="bar"><div id="batteryBar" class="bar-fill"></div></div>
+
+            <p>💾 Storage: <span id="storageValue"></span></p>
+            <div class="bar"><div id="storageBar" class="bar-fill"></div></div>
+
+            <p>📱 Device Model: <span id="modelValue"></span></p>
+            <p>🤖 Android Version: <span id="androidValue"></span></p>
+            <p>⏱ Last Update: <span id="lastUpdate"></span></p>
+
+            <div class="cards">
+                <!-- SCREEN TIME -->
+                <div class="card">
+                    <h3>📱 Screen Time (Today)</h3>
+                    <p id="screenTime">0 min</p>
+                </div>
+
+                <!-- APP USAGE -->
+                <div class="card">
+                    <h3>📊 App Usage (Today)</h3>
+                    <p>Total: <strong id="appTotalTime">0 min</strong></p>
+                    <div class="chart-box">
+                        <canvas id="appChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== SCRIPT ========== -->
+<!-- Link to JavaScript files -->
+<script src="js/loadChildren.js"></script>
+<script src="js/childDetails.js"></script>
+<script src="js/reportGeneration.js"></script>
+<script src="js/alerts.js"></script>
+<script src="js/helpers.js"></script>
+<script src="js/main.js"></script>
+<script src="js/mediaActivity.js"></script>
+
+</body>
+</html>

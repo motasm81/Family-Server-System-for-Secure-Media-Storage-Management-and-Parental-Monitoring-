@@ -1,0 +1,164 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #121212;
+    color: #f1f1f1;
+}
+
+.container {
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: 260px;
+    background: #1e1e1e;
+    padding: 15px;
+}
+
+.menu-item {
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.menu-item:hover,
+.child-item:hover {
+    background: #333;
+}
+
+.child-item {
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.card {
+    background: #1e1e1e;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.cards {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.bar {
+    height: 12px;
+    background: #333;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.bar-fill {
+    height: 100%;
+    background: #4caf50;
+}
+
+.chart-box {
+    height: 260px;
+}
+
+.hidden {
+    display: none;
+}
+.alert-item {
+    background: #2a1a1a;
+    border-left: 4px solid #f44336;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 6px;
+}
+
+.alert-item strong {
+    color: #ff5252;
+}
+
+.alert-time {
+    font-size: 0.85em;
+    color: #aaa;
+}
+/* ================= REPORTS SECTION ================= */
+/* ================= REPORTS SECTION ================= */
+
+#reports-section {
+    margin-top: 20px;
+}
+
+#reports-section .card {
+    margin-bottom: 20px;
+}
+
+/* Report header */
+#reports-section h3 {
+    margin-bottom: 10px;
+}
+
+#reportChildName {
+    color: #555;
+    margin-bottom: 15px;
+}
+
+/* Controls */
+.report-controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.report-controls select,
+.report-controls button {
+    padding: 8px 12px;
+    font-size: 14px;
+}
+
+.report-controls button {
+    cursor: pointer;
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+}
+
+.report-controls button:hover {
+    background: #4338ca;
+}
+
+/* Report cards layout */
+#reports-section .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px;
+}
+
+/* Highlight values */
+#reportScreenTime,
+#reportAlertsCount,
+#reportMaxScore {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+/* Alerts emphasis */
+#reportMaxScore {
+    color: #b91c1c;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+    .report-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
